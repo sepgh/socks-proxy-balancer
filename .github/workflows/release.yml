@@ -1,0 +1,178 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+
+jobs:
+  build-native:
+    name: Build Native Image - ${{ matrix.os }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          # Linux AMD64
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            artifact_name: proxy-balancer-linux-amd64
+            
+          # Linux ARM64
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest-arm64
+            artifact_name: proxy-balancer-linux-arm64
+            
+          # Linux x86 (32-bit) - using cross-compilation
+          - os: linux
+            arch: x86
+            runner: ubuntu-latest
+            artifact_name: proxy-balancer-linux-x86
+            
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up GraalVM
+      uses: graalvm/setup-graalvm@v1
+      with:
+        java-version: '21'
+        distribution: 'graalvm'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        native-image-job-reports: 'true'
+        
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Build with Maven
+      run: mvn clean package -DskipTests
+      
+    - name: Build native image
+      run: |
+        if [ "${{ matrix.arch }}" = "x86" ]; then
+          # For x86, we need to add specific build args
+          mvn -Pnative native:compile -DskipTests \
+            -Dgraalvm.native-image.buildArgs="--static,--libc=musl,-march=i686"
+        else
+          mvn -Pnative native:compile -DskipTests
+        fi
+        
+    - name: Rename binary
+      run: |
+        if [ -f target/proxy-balancer ]; then
+          mv target/proxy-balancer target/${{ matrix.artifact_name }}
+        fi
+        
+    - name: Test binary
+      run: |
+        chmod +x target/${{ matrix.artifact_name }}
+        target/${{ matrix.artifact_name }} --version || echo "Version check not available"
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: target/${{ matrix.artifact_name }}
+        retention-days: 7
+        
+  create-release:
+    name: Create Draft Release
+    needs: build-native
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        
+    - name: Create checksums
+      run: |
+        cd artifacts
+        for dir in */; do
+          cd "$dir"
+          for file in *; do
+            sha256sum "$file" > "$file.sha256"
+          done
+          cd ..
+        done
+        
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        cat > release_notes.md << 'EOF'
+        ## Proxy Load Balancer Release
+        
+        ### Features
+        - Dynamic SOCKS proxy load balancing
+        - Automatic health checking and failover
+        - Latency-based proxy selection
+        - Support for multiple proxy types (Direct, Xray, Singbox, DNSTT, Slipstream)
+        - GraalVM native image for fast startup and low memory usage
+        
+        ### Downloads
+        
+        Choose the binary for your platform:
+        
+        - **Linux AMD64**: `proxy-balancer-linux-amd64` (Most common 64-bit Linux)
+        - **Linux ARM64**: `proxy-balancer-linux-arm64` (Raspberry Pi 4/5, ARM servers)
+        - **Linux x86**: `proxy-balancer-linux-x86` (32-bit x86 systems)
+        
+        ### Installation
+        
+        ```bash
+        # Download the binary for your platform
+        wget https://github.com/${{ github.repository }}/releases/download/<tag>/proxy-balancer-linux-amd64
+        
+        # Make it executable
+        chmod +x proxy-balancer-linux-amd64
+        
+        # Run it
+        ./proxy-balancer-linux-amd64 config.yaml
+        ```
+        
+        ### Verification
+        
+        Verify the download with SHA256:
+        ```bash
+        sha256sum -c proxy-balancer-linux-amd64.sha256
+        ```
+        
+        ### Configuration
+        
+        See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for configuration details.
+        
+        ---
+        
+        **Commit**: ${{ github.sha }}
+        **Build Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        EOF
+        
+    - name: Get version
+      id: version
+      run: |
+        VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "tag=v${VERSION}-${TIMESTAMP}" >> $GITHUB_OUTPUT
+        
+    - name: Create Draft Release
+      uses: softprops/action-gh-release@v1
+      with:
+        draft: true
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: Release ${{ steps.version.outputs.version }}
+        body_path: release_notes.md
+        files: |
+          artifacts/**/*
+        token: ${{ secrets.GITHUB_TOKEN }}

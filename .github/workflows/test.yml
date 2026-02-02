@@ -1,0 +1,44 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+        
+    - name: Build with Maven
+      run: mvn clean compile test-compile
+      
+    - name: Run integration tests
+      run: |
+        CLASSPATH=$(mvn dependency:build-classpath -q -Dmdep.outputFile=/dev/stdout)
+        CLASSPATH="target/classes:target/test-classes:$CLASSPATH"
+        java -cp "$CLASSPATH" \
+          -Dorg.slf4j.simpleLogger.defaultLogLevel=info \
+          com.github.sepgh.integration.ProxyBalancerIntegrationTest
+          
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: |
+          target/surefire-reports/
+          target/test-classes/
+        retention-days: 7
