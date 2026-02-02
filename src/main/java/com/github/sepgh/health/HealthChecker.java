@@ -112,18 +112,18 @@ public class HealthChecker {
         Map<ProxyClient, ProxyTestResult> results = testProxies(proxies);
         
         ProxyClient current = selectedProxy.get();
-        if (current != null) {
-            ProxyTestResult currentResult = results.get(current);
-            if (currentResult != null && currentResult.isSuccess()) {
-                logger.debug("Current proxy {} is still healthy", current.getName());
-                return;
-            }
+        ProxyClient bestProxy = selectBestProxy(results);
+        
+        if (bestProxy == null) {
+            logger.warn("No working proxy found during health check");
+            return;
         }
         
-        ProxyClient bestProxy = selectBestProxy(results);
-        if (bestProxy != null && bestProxy != current) {
+        if (bestProxy != current) {
             logger.info("Switching to better proxy: {}", bestProxy.getName());
             switchToProxy(bestProxy);
+        } else {
+            logger.debug("Current proxy {} is still the best option", current.getName());
         }
     }
 

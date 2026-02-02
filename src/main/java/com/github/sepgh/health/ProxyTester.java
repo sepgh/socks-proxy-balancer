@@ -27,23 +27,29 @@ public class ProxyTester {
             String host = uri.getHost();
             int port = uri.getPort() == -1 ? 80 : uri.getPort();
 
+            logger.debug("Testing proxy {} for {}:{} (URL: {})", endpoint, host, port, testUrl);
+
             try (Socket proxySocket = new Socket()) {
                 proxySocket.connect(new InetSocketAddress(endpoint.getHost(), endpoint.getPort()), timeoutMs);
                 proxySocket.setSoTimeout(timeoutMs);
+                logger.debug("Connected to proxy {}", endpoint);
 
                 if (!performSocks5Handshake(proxySocket)) {
                     return ProxyTestResult.failure(endpoint, "SOCKS5 handshake failed");
                 }
+                logger.debug("SOCKS5 handshake successful with {}", endpoint);
 
                 if (!connectThroughSocks5(proxySocket, host, port)) {
                     return ProxyTestResult.failure(endpoint, "Failed to connect to target through SOCKS5");
                 }
+                logger.debug("SOCKS5 connect to {}:{} successful through {}", host, port, endpoint);
 
                 if (!testHttpRequest(proxySocket, host)) {
                     return ProxyTestResult.failure(endpoint, "HTTP request failed");
                 }
 
                 long latency = System.currentTimeMillis() - startTime;
+                logger.debug("Proxy {} test successful, latency: {}ms", endpoint, latency);
                 return ProxyTestResult.success(endpoint, latency);
             }
         } catch (SocketTimeoutException e) {
