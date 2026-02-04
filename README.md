@@ -95,6 +95,8 @@ proxies:
 - `connection_timeout_ms`: Connection timeout for proxy tests (default: 5000)
 - `test_url`: URL to test proxy connectivity (default: http://www.google.com)
 - `test_rounds`: Number of test rounds for averaging latency (default: 1)
+- `log_subprocess_output`: Enable subprocess output logging (default: false, set true for debugging)
+- `network_interface`: Network interface to monitor (optional, examples: "eth0" (Linux), "en0" (macOS), "Ethernet" (Windows))
 
 #### Proxy Types
 

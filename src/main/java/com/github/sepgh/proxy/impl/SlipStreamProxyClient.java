@@ -147,8 +147,14 @@ public class SlipStreamProxyClient extends AbstractProxyClient {
     private void readStream(java.io.InputStream inputStream, String streamName) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
             String line;
+            boolean logOutput = getConfigBoolean("log_subprocess_output", false);
+            
             while ((line = reader.readLine()) != null) {
-                logger.info("[{}][{}] {}", getName(), streamName, line);
+                if (logOutput) {
+                    logger.info("[{}][{}] {}", getName(), streamName, line);
+                } else {
+                    logger.debug("[{}][{}] {}", getName(), streamName, line);
+                }
                 
                 // Detect connection issues from SlipStream output
                 if (line.contains("WARN") && 
@@ -163,7 +169,6 @@ public class SlipStreamProxyClient extends AbstractProxyClient {
                         logger.warn("SlipStream connection warning detected ({} consecutive warnings in {}ms)", 
                                   consecutiveWarnings, now - lastConnectionWarningTime);
                         
-                        // If we've hit the threshold, log that we're now unhealthy
                         if (consecutiveWarnings >= MAX_WARNINGS_THRESHOLD) {
                             logger.error("SlipStream proxy {} has become UNHEALTHY after {} consecutive connection warnings", 
                                        getName(), consecutiveWarnings);

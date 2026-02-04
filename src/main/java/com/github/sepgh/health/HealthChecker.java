@@ -2,14 +2,24 @@ package com.github.sepgh.health;
 
 import com.github.sepgh.config.ConfigurationManager;
 import com.github.sepgh.config.ProxyConfig;
+import com.github.sepgh.network.NetworkInterfaceMonitor;
 import com.github.sepgh.proxy.ProxyClient;
 import com.github.sepgh.proxy.ProxyClientFactory;
 import com.github.sepgh.proxy.impl.DnsTestedSlipStreamProxyClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class HealthChecker {
@@ -17,6 +27,7 @@ public class HealthChecker {
     
     private final ConfigurationManager configManager;
     private final ProxyTester proxyTester;
+    private final NetworkInterfaceMonitor networkMonitor;
     private final Map<String, ProxyClient> activeClients = new ConcurrentHashMap<>();
     private final AtomicReference<ProxyClient> selectedProxy = new AtomicReference<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
@@ -31,6 +42,9 @@ public class HealthChecker {
         this.proxyTester = proxyTester;
         this.healthCheckIntervalSeconds = configManager.getConfig().getHealthCheckIntervalSeconds();
         this.currentProxyCheckIntervalSeconds = configManager.getConfig().getCurrentProxyCheckIntervalSeconds();
+        
+        String networkInterface = configManager.getConfig().getNetworkInterface();
+        this.networkMonitor = new NetworkInterfaceMonitor(networkInterface);
     }
 
     public void start() {
@@ -108,6 +122,12 @@ public class HealthChecker {
     private void checkAllProxies() {
         if (!running) return;
         
+        // Check network availability first - don't switch proxies if network is down
+        if (!networkMonitor.isNetworkAvailable()) {
+            logger.warn("Network interface is down, skipping periodic health check");
+            return;
+        }
+        
         logger.debug("Running health check on all proxies");
         List<ProxyConfig> proxies = configManager.getProxies();
         Map<ProxyClient, ProxyTestResult> results = testProxies(proxies);
@@ -130,6 +150,12 @@ public class HealthChecker {
 
     private void checkCurrentProxy() {
         if (!running) return;
+        
+        // Check network availability first - don't switch proxies if network is down
+        if (!networkMonitor.isNetworkAvailable()) {
+            logger.warn("Network interface is down, skipping current proxy health check");
+            return;
+        }
         
         ProxyClient current = selectedProxy.get();
         if (current == null) {

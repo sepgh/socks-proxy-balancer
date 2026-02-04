@@ -24,6 +24,12 @@ public class ApplicationConfig {
     @JsonProperty("test_url")
     private String testUrl = "http://www.google.com";
 
+    @JsonProperty("log_subprocess_output")
+    private boolean logSubprocessOutput = false;
+
+    @JsonProperty("network_interface")
+    private String networkInterface = null;
+
     @JsonProperty("proxies")
     private List<ProxyConfig> proxies = new ArrayList<>();
 
@@ -81,5 +87,21 @@ public class ApplicationConfig {
 
     public void setProxies(List<ProxyConfig> proxies) {
         this.proxies = proxies;
+    }
+
+    public boolean isLogSubprocessOutput() {
+        return logSubprocessOutput;
+    }
+
+    public void setLogSubprocessOutput(boolean logSubprocessOutput) {
+        this.logSubprocessOutput = logSubprocessOutput;
+    }
+
+    public String getNetworkInterface() {
+        return networkInterface;
+    }
+
+    public void setNetworkInterface(String networkInterface) {
+        this.networkInterface = networkInterface;
     }
 }

@@ -120,8 +120,13 @@ public class ProcessProxyClient extends AbstractProxyClient {
     private void readStream(java.io.InputStream inputStream, String streamName) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
             String line;
+            boolean logOutput = getConfigBoolean("log_subprocess_output", false);
             while ((line = reader.readLine()) != null) {
-                logger.info("[{}][{}] {}", getName(), streamName, line);
+                if (logOutput) {
+                    logger.info("[{}][{}] {}", getName(), streamName, line);
+                } else {
+                    logger.debug("[{}][{}] {}", getName(), streamName, line);
+                }
             }
         } catch (IOException e) {
             if (isRunning()) {

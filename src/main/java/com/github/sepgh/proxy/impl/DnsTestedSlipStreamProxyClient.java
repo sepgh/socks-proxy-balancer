@@ -4,6 +4,7 @@ import com.github.sepgh.config.ProxyConfig;
 import com.github.sepgh.dns.DnsEndpoint;
 import com.github.sepgh.dns.DnsTestResult;
 import com.github.sepgh.dns.DnsTester;
+import com.github.sepgh.network.NetworkInterfaceMonitor;
 import com.github.sepgh.proxy.AbstractProxyClient;
 import com.github.sepgh.proxy.ProxyEndpoint;
 
@@ -11,7 +12,11 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
@@ -22,12 +27,16 @@ public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
     private final int dnsTestTimeoutMs;
     private final String dnsTestDomain;
     private final int maxRetries;
+    private final NetworkInterfaceMonitor networkMonitor;
 
     public DnsTestedSlipStreamProxyClient(ProxyConfig config) {
         super(config);
         this.dnsTestTimeoutMs = getConfigInt("dns_test_timeout_ms", 3000);
         this.dnsTestDomain = getConfigString("dns_test_domain", "www.google.com");
         this.maxRetries = getConfigInt("max_dns_retries", 5);
+        
+        String networkInterface = getConfigString("network_interface", null);
+        this.networkMonitor = new NetworkInterfaceMonitor(networkInterface);
     }
 
     @Override
@@ -93,6 +102,11 @@ public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
     }
     
     public boolean rotateToNextDnsEndpoint() {
+        if (!networkMonitor.isNetworkAvailable()) {
+            logger.warn("Network interface is down, skipping DNS rotation for {}", getName());
+            return false;
+        }
+        
         if (sortedDnsEndpoints == null || sortedDnsEndpoints.isEmpty()) {
             logger.error("No DNS endpoints available for rotation");
             return false;
