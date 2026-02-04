@@ -1,0 +1,155 @@
+package com.github.sepgh.proxy.impl;
+
+import com.github.sepgh.config.ProxyConfig;
+import com.github.sepgh.proxy.AbstractProxyClient;
+import com.github.sepgh.proxy.ProxyEndpoint;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+public class SlipStreamProxyClient extends AbstractProxyClient {
+    private Process process;
+    private Thread outputReaderThread;
+    private Thread errorReaderThread;
+
+    public SlipStreamProxyClient(ProxyConfig config) {
+        super(config);
+        validateConfig();
+    }
+
+    private void validateConfig() {
+        String binaryPath = getConfigString("binary_path", null);
+        if (binaryPath == null || binaryPath.isEmpty()) {
+            throw new IllegalArgumentException("binary_path is required for SlipStream proxy client");
+        }
+
+        File binaryFile = new File(binaryPath);
+        if (!binaryFile.exists()) {
+            throw new IllegalArgumentException("Binary file does not exist: " + binaryPath);
+        }
+        
+        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        if (!isWindows && !binaryFile.canExecute()) {
+            throw new IllegalArgumentException("Binary file is not executable: " + binaryPath);
+        }
+
+        String certPath = getConfigString("cert_path", null);
+        if (certPath == null || certPath.isEmpty()) {
+            throw new IllegalArgumentException("cert_path is required for SlipStream proxy client");
+        }
+
+        File certFile = new File(certPath);
+        if (!certFile.exists()) {
+            throw new IllegalArgumentException("Certificate file does not exist: " + certPath);
+        }
+        if (!certFile.canRead()) {
+            throw new IllegalArgumentException("Certificate file is not readable: " + certPath);
+        }
+
+        String domain = getConfigString("domain", null);
+        if (domain == null || domain.isEmpty()) {
+            throw new IllegalArgumentException("domain is required for SlipStream proxy client");
+        }
+    }
+
+    @Override
+    public void start() throws Exception {
+        if (isRunning()) {
+            logger.warn("SlipStream proxy client {} is already running", getName());
+            return;
+        }
+
+        String binaryPath = getConfigString("binary_path", null);
+        String resolverIp = getConfigString("resolver_ip", "127.0.0.1");
+        int resolverPort = getConfigInt("resolver_port", 53);
+        String domain = getConfigString("domain", null);
+        String certPath = getConfigString("cert_path", null);
+        
+        String host = getConfigString("host", "127.0.0.1");
+        int port = getConfigInt("port", 0);
+        if (port == 0) {
+            throw new IllegalArgumentException("Port is required for SlipStream proxy client");
+        }
+        this.endpoint = new ProxyEndpoint(host, port);
+
+        List<String> commandList = new ArrayList<>();
+        commandList.add(binaryPath);
+        commandList.add("--resolver");
+        commandList.add(resolverIp + ":" + resolverPort);
+        commandList.add("--domain");
+        commandList.add(domain);
+        commandList.add("-l");
+        commandList.add(String.valueOf(port));
+        commandList.add("--cert");
+        commandList.add(certPath);
+
+        ProcessBuilder processBuilder = new ProcessBuilder(commandList);
+
+        logger.info("Starting SlipStream proxy client {}: {}", getName(), String.join(" ", commandList));
+        process = processBuilder.start();
+
+        outputReaderThread = new Thread(() -> readStream(process.getInputStream(), "STDOUT"), getName() + "-stdout");
+        errorReaderThread = new Thread(() -> readStream(process.getErrorStream(), "STDERR"), getName() + "-stderr");
+        outputReaderThread.setDaemon(true);
+        errorReaderThread.setDaemon(true);
+        outputReaderThread.start();
+        errorReaderThread.start();
+
+        int startupDelayMs = getConfigInt("startup_delay_ms", 2000);
+        Thread.sleep(startupDelayMs);
+
+        if (!process.isAlive()) {
+            throw new RuntimeException("SlipStream process for proxy client " + getName() + " terminated unexpectedly");
+        }
+
+        setRunning(true);
+        logger.info("SlipStream proxy client {} started successfully on {}", getName(), endpoint);
+    }
+
+    @Override
+    public void stop() throws Exception {
+        if (!isRunning()) {
+            return;
+        }
+
+        logger.info("Stopping SlipStream proxy client {}", getName());
+        setRunning(false);
+
+        if (process != null && process.isAlive()) {
+            process.destroy();
+            boolean terminated = process.waitFor(5, TimeUnit.SECONDS);
+            if (!terminated) {
+                logger.warn("SlipStream process did not terminate gracefully, forcing termination");
+                process.destroyForcibly();
+                process.waitFor(2, TimeUnit.SECONDS);
+            }
+        }
+
+        if (outputReaderThread != null) {
+            outputReaderThread.interrupt();
+        }
+        if (errorReaderThread != null) {
+            errorReaderThread.interrupt();
+        }
+
+        logger.info("SlipStream proxy client {} stopped", getName());
+    }
+
+    private void readStream(java.io.InputStream inputStream, String streamName) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                logger.debug("[{}][{}] {}", getName(), streamName, line);
+            }
+        } catch (IOException e) {
+            if (isRunning()) {
+                logger.error("Error reading {} for {}", streamName, getName(), e);
+            }
+        }
+    }
+}

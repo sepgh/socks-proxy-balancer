@@ -14,13 +14,49 @@ public class ProxyTester {
     private static final Logger logger = LoggerFactory.getLogger(ProxyTester.class);
     private final int timeoutMs;
     private final String testUrl;
+    private final int testRounds;
 
     public ProxyTester(int timeoutMs, String testUrl) {
+        this(timeoutMs, testUrl, 1);
+    }
+
+    public ProxyTester(int timeoutMs, String testUrl, int testRounds) {
         this.timeoutMs = timeoutMs;
         this.testUrl = testUrl;
+        this.testRounds = Math.max(1, testRounds);
     }
 
     public ProxyTestResult test(ProxyEndpoint endpoint) {
+        if (testRounds == 1) {
+            return performSingleTest(endpoint);
+        }
+
+        logger.debug("Testing proxy {} with {} rounds", endpoint, testRounds);
+        long totalLatency = 0;
+        int successfulRounds = 0;
+        String lastError = null;
+
+        for (int round = 0; round < testRounds; round++) {
+            ProxyTestResult result = performSingleTest(endpoint);
+            if (result.isSuccess()) {
+                totalLatency += result.getLatencyMs();
+                successfulRounds++;
+            } else {
+                lastError = result.getErrorMessage();
+            }
+        }
+
+        if (successfulRounds == 0) {
+            return ProxyTestResult.failure(endpoint, lastError != null ? lastError : "All test rounds failed");
+        }
+
+        long averageLatency = totalLatency / successfulRounds;
+        logger.debug("Proxy {} average latency: {}ms ({}/{} rounds successful)", 
+                endpoint, averageLatency, successfulRounds, testRounds);
+        return ProxyTestResult.success(endpoint, averageLatency);
+    }
+
+    private ProxyTestResult performSingleTest(ProxyEndpoint endpoint) {
         long startTime = System.currentTimeMillis();
         try {
             URI uri = new URI(testUrl);

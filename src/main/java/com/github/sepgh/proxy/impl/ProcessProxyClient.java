@@ -50,9 +50,14 @@ public class ProcessProxyClient extends AbstractProxyClient {
         }
         this.endpoint = new ProxyEndpoint(host, port);
 
+        String portPlaceholder = "{PORT}";
+        String portValue = String.valueOf(port);
+        
         List<String> commandList = new ArrayList<>();
-        commandList.add(command);
-        commandList.addAll(args);
+        commandList.add(command.replace(portPlaceholder, portValue));
+        for (String arg : args) {
+            commandList.add(arg.replace(portPlaceholder, portValue));
+        }
 
         ProcessBuilder processBuilder = new ProcessBuilder(commandList);
         if (workingDir != null) {

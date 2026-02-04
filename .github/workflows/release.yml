@@ -32,6 +32,12 @@ jobs:
             runner: ubuntu-latest
             artifact_name: proxy-balancer-linux-x86
             
+          # Windows AMD64
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            artifact_name: proxy-balancer-windows-amd64.exe
+            
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -54,7 +60,8 @@ jobs:
     - name: Build with Maven
       run: mvn clean package -DskipTests
       
-    - name: Build native image
+    - name: Build native image (Linux)
+      if: matrix.os == 'linux'
       run: |
         if [ "${{ matrix.arch }}" = "x86" ]; then
           # For x86, we need to add specific build args
@@ -64,13 +71,28 @@ jobs:
           mvn -Pnative native:compile -DskipTests
         fi
         
-    - name: Rename and prepare binary
+    - name: Build native image (Windows)
+      if: matrix.os == 'windows'
+      run: mvn -Pnative native:compile -DskipTests
+      shell: cmd
+        
+    - name: Rename and prepare binary (Linux)
+      if: matrix.os == 'linux'
       run: |
         if [ -f target/proxy-balancer ]; then
           mv target/proxy-balancer target/${{ matrix.artifact_name }}
           chmod +x target/${{ matrix.artifact_name }}
           ls -lh target/${{ matrix.artifact_name }}
         fi
+        
+    - name: Rename and prepare binary (Windows)
+      if: matrix.os == 'windows'
+      run: |
+        if (Test-Path target/proxy-balancer.exe) {
+          Move-Item target/proxy-balancer.exe target/${{ matrix.artifact_name }}
+          Get-Item target/${{ matrix.artifact_name }}
+        }
+      shell: pwsh
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -79,11 +101,44 @@ jobs:
         path: target/${{ matrix.artifact_name }}
         retention-days: 7
         
+  build-jar:
+    name: Build JAR
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        
+    - name: Cache Maven packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Build JAR with dependencies
+      run: mvn clean package -DskipTests
+      
+    - name: Upload JAR artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: proxy-balancer.jar
+        path: target/proxy-balancer.jar
+        retention-days: 7
+        
   create-release:
     name: Create Draft Release
-    needs: build-native
+    needs: [build-native, build-jar]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
@@ -115,19 +170,27 @@ jobs:
         - Dynamic SOCKS proxy load balancing
         - Automatic health checking and failover
         - Latency-based proxy selection
-        - Support for multiple proxy types (Direct, Xray, Singbox, DNSTT, Slipstream)
+        - Support for multiple proxy types (Direct, Process, SlipStream, DNS-tested SlipStream)
         - GraalVM native image for fast startup and low memory usage
+        - Cross-platform support (Linux, Windows)
         
         ### Downloads
         
-        Choose the binary for your platform:
+        #### Native Binaries (Recommended)
+        
+        Choose the native binary for your platform for best performance:
         
         - **Linux AMD64**: `proxy-balancer-linux-amd64` (Most common 64-bit Linux)
-        - **Linux ARM64**: `proxy-balancer-linux-arm64` (Raspberry Pi 4/5, ARM servers)
         - **Linux x86**: `proxy-balancer-linux-x86` (32-bit x86 systems)
+        - **Windows AMD64**: `proxy-balancer-windows-amd64.exe` (64-bit Windows)
+        
+        #### JAR (Universal)
+        
+        - **JAR with dependencies**: `proxy-balancer.jar` (Requires Java 21+, works on all platforms)
         
         ### Installation
         
+        #### Linux/macOS
         ```bash
         # Download the binary for your platform
         wget https://github.com/${{ github.repository }}/releases/download/<tag>/proxy-balancer-linux-amd64
@@ -139,11 +202,27 @@ jobs:
         ./proxy-balancer-linux-amd64 config.yaml
         ```
         
+        #### Windows
+        ```powershell
+        # Download and run
+        .\proxy-balancer-windows-amd64.exe config.yaml
+        ```
+        
+        #### JAR (Any Platform)
+        ```bash
+        # Requires Java 21 or higher
+        java -jar proxy-balancer.jar config.yaml
+        ```
+        
         ### Verification
         
         Verify the download with SHA256:
         ```bash
+        # Linux/macOS
         sha256sum -c proxy-balancer-linux-amd64.sha256
+        
+        # Windows (PowerShell)
+        Get-FileHash proxy-balancer-windows-amd64.exe -Algorithm SHA256
         ```
         
         ### Configuration
