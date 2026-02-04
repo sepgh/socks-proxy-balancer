@@ -40,22 +40,34 @@ The project uses GitHub Actions for:
 - Push of version tags (e.g., `v1.0.0`)
 
 **Build Matrix**:
-| Platform | Architecture | Binary Name |
-|----------|-------------|-------------|
-| Linux | AMD64 (x86_64) | `proxy-balancer-linux-amd64` |
-| Linux | ARM64 (aarch64) | `proxy-balancer-linux-arm64` |
-| Linux | x86 (i686) | `proxy-balancer-linux-x86` |
+| Platform | Architecture | Binary Name | Type |
+|----------|-------------|-------------|------|
+| Linux | AMD64 (x86_64) | `proxy-balancer-linux-amd64` | Native |
+| Linux | x86 (i686) | `proxy-balancer-linux-x86` | Native |
+| Windows | AMD64 (x86_64) | `proxy-balancer-windows-amd64.exe` | Native |
+| Universal | All | `proxy-balancer.jar` | JAR |
 
-**Steps**:
+**Note**: ARM64 Linux build is disabled by default (requires self-hosted runner or GitHub Team/Enterprise plan).
+
+**Steps for Native Builds**:
 1. Checkout code
 2. Set up GraalVM 21 with native-image
 3. Build project with Maven (tests skipped)
-4. Compile native image for target architecture
+4. Compile native image for target architecture (with `-Pnative` profile)
 5. Prepare and verify binary exists
 6. Upload as artifact
-7. Create SHA256 checksums
-8. Generate release notes
-9. Create draft release with all binaries
+
+**Steps for JAR Build**:
+1. Checkout code
+2. Set up JDK 21 (Temurin)
+3. Build fat JAR with all dependencies
+4. Upload JAR as artifact
+
+**Final Steps**:
+1. Download all artifacts
+2. Create SHA256 checksums
+3. Generate release notes
+4. Create draft release with all binaries and JAR
 
 **Duration**: ~10-15 minutes per architecture (parallel execution)
 
@@ -72,20 +84,36 @@ The project uses GitHub Actions for:
 - **Target**: Standard 64-bit Intel/AMD processors
 - **Use Cases**: Most Linux servers, desktops, cloud VMs
 
-### ARM64 (aarch64)
-- **Runner**: `ubuntu-latest-arm64` (requires ARM64 runner)
+### ARM64 (aarch64) - DISABLED
+- **Runner**: Self-hosted or GitHub Enterprise ARM64 runner required
 - **Target**: 64-bit ARM processors
 - **Use Cases**: 
   - Raspberry Pi 4/5
   - AWS Graviton instances
   - Oracle Cloud ARM instances
   - Other ARM-based servers
+- **Status**: Disabled by default (uncomment in workflow to enable with self-hosted runner)
 
 ### x86 (i686)
 - **Runner**: `ubuntu-latest` (cross-compilation)
 - **Target**: 32-bit x86 processors
 - **Use Cases**: Legacy systems, embedded devices
 - **Note**: Uses static linking with musl libc
+
+### Windows AMD64
+- **Runner**: `windows-latest`
+- **Target**: 64-bit Windows systems
+- **Use Cases**: Windows desktops, servers
+- **Note**: Produces `.exe` executable
+
+### Universal JAR
+- **Runner**: `ubuntu-latest`
+- **Target**: Any platform with Java 21+
+- **Use Cases**: 
+  - Platforms without native builds
+  - Development and testing
+  - Systems where native image isn't available
+- **Note**: Requires Java 21 or higher to run
 
 ## Release Process
 
@@ -114,6 +142,7 @@ The project uses GitHub Actions for:
 
 Each release includes SHA256 checksums for verification:
 
+### Linux/macOS
 ```bash
 # Download binary and checksum
 wget https://github.com/USER/REPO/releases/download/TAG/proxy-balancer-linux-amd64
@@ -123,10 +152,23 @@ wget https://github.com/USER/REPO/releases/download/TAG/proxy-balancer-linux-amd
 sha256sum -c proxy-balancer-linux-amd64.sha256
 ```
 
+### Windows (PowerShell)
+```powershell
+# Download and verify
+$hash = Get-FileHash proxy-balancer-windows-amd64.exe -Algorithm SHA256
+$expectedHash = Get-Content proxy-balancer-windows-amd64.exe.sha256
+if ($hash.Hash -eq $expectedHash.Split()[0]) {
+    Write-Host "Verification successful"
+} else {
+    Write-Host "Verification failed"
+}
+```
+
 ## Local Testing
 
 Before pushing, test the build locally:
 
+### Native Image Build
 ```bash
 # Install GraalVM
 sdk install java 21-graalvm
@@ -134,8 +176,23 @@ sdk install java 21-graalvm
 # Build native image
 mvn clean package -Pnative -DskipTests
 
+# Test (Linux/macOS)
+./target/proxy-balancer config.yaml
+
+# Test (Windows)
+target\proxy-balancer.exe config.yaml
+```
+
+### JAR Build
+```bash
+# Use any JDK 21+
+sdk install java 21-tem
+
+# Build JAR
+mvn clean package -DskipTests
+
 # Test
-./target/proxy-balancer --version
+java -jar target/proxy-balancer.jar config.yaml
 ```
 
 ## Troubleshooting
@@ -199,17 +256,23 @@ Add to `README.md`:
 Edit `.github/workflows/release.yml` matrix:
 
 ```yaml
-# macOS ARM64
+# macOS ARM64 (Apple Silicon)
 - os: macos
   arch: arm64
   runner: macos-14
   artifact_name: proxy-balancer-macos-arm64
 
-# Windows AMD64
-- os: windows
+# macOS AMD64 (Intel)
+- os: macos
   arch: amd64
-  runner: windows-latest
-  artifact_name: proxy-balancer-windows-amd64.exe
+  runner: macos-13
+  artifact_name: proxy-balancer-macos-amd64
+
+# Enable ARM64 Linux (requires self-hosted runner)
+- os: linux
+  arch: arm64
+  runner: [self-hosted, linux, arm64]
+  artifact_name: proxy-balancer-linux-arm64
 ```
 
 ### Change Test Frequency

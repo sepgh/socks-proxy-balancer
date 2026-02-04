@@ -12,6 +12,7 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
   - type: "direct"
@@ -66,9 +67,10 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
-  - type: "xray"
+  - type: "process"
     name: "xray-vless-server1"
     enabled: true
     config:
@@ -82,7 +84,7 @@ proxies:
       startup_delay_ms: 3000
       working_dir: "/etc/xray"
 
-  - type: "xray"
+  - type: "process"
     name: "xray-vless-server2"
     enabled: true
     config:
@@ -107,9 +109,10 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
-  - type: "singbox"
+  - type: "process"
     name: "singbox-vmess"
     enabled: true
     config:
@@ -136,7 +139,7 @@ proxies:
       startup_delay_ms: 2000
 ```
 
-## DNSTT Configuration
+## DNSTT Configuration with Port Placeholder
 
 ```yaml
 listen_host: "127.0.0.1"
@@ -146,9 +149,10 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
-  - type: "dnstt"
+  - type: "process"
     name: "dnstt-cloudflare"
     enabled: true
     config:
@@ -159,12 +163,12 @@ proxies:
         - "-pubkey"
         - "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         - "tunnel.example.com"
-        - "127.0.0.1:7300"
+        - "127.0.0.1:{PORT}"  # {PORT} will be replaced with 7300
       host: "127.0.0.1"
       port: 7300
       startup_delay_ms: 2000
 
-  - type: "dnstt"
+  - type: "process"
     name: "dnstt-google"
     enabled: true
     config:
@@ -175,13 +179,13 @@ proxies:
         - "-pubkey"
         - "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         - "tunnel.example.com"
-        - "127.0.0.1:7301"
+        - "127.0.0.1:{PORT}"  # {PORT} will be replaced with 7301
       host: "127.0.0.1"
       port: 7301
       startup_delay_ms: 2000
 ```
 
-## Slipstream Configuration
+## SlipStream Configuration
 
 ```yaml
 listen_host: "127.0.0.1"
@@ -191,22 +195,58 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
   - type: "slipstream"
-    name: "slipstream-1"
+    name: "slipstream-manual-dns"
     enabled: true
     config:
-      command: "/usr/local/bin/slipstream"
-      args:
-        - "--config"
-        - "/etc/slipstream/config1.yaml"
+      binary_path: "/usr/local/bin/slipstream"
+      resolver_ip: "8.8.8.8"
+      resolver_port: 53
+      domain: "tunnel.example.com"
+      cert_path: "/etc/slipstream/cert.pem"
       host: "127.0.0.1"
       port: 8080
       startup_delay_ms: 2000
-      env:
-        LOG_LEVEL: "info"
-        RUST_BACKTRACE: "1"
+```
+
+## DNS-Tested SlipStream Configuration
+
+Automatically tests multiple DNS resolvers and selects the fastest:
+
+```yaml
+listen_host: "127.0.0.1"
+listen_port: 1080
+
+health_check_interval_seconds: 30
+current_proxy_check_interval_seconds: 10
+connection_timeout_ms: 5000
+test_url: "http://www.google.com"
+test_rounds: 3  # Use 3 rounds for more accurate latency
+
+proxies:
+  - type: "dns-tested-slipstream"
+    name: "slipstream-auto-dns"
+    enabled: true
+    config:
+      binary_path: "/usr/local/bin/slipstream"
+      domain: "tunnel.example.com"
+      cert_path: "/etc/slipstream/cert.pem"
+      host: "127.0.0.1"
+      port: 8080
+      startup_delay_ms: 2000
+      
+      # List of DNS endpoints to test
+      dns_endpoints:
+        - "8.8.8.8:53"          # Google DNS
+        - "1.1.1.1:53"          # Cloudflare DNS
+        - "9.9.9.9:53"          # Quad9 DNS
+        - "208.67.222.222:53"   # OpenDNS
+      
+      dns_test_timeout_ms: 3000
+      dns_test_domain: "www.google.com"
 ```
 
 ## Mixed Configuration (Multiple Proxy Types)
@@ -219,6 +259,7 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
   - type: "direct"
@@ -228,7 +269,7 @@ proxies:
       host: "proxy.example.com"
       port: 1080
 
-  - type: "xray"
+  - type: "process"
     name: "xray-vless"
     enabled: true
     config:
@@ -241,7 +282,7 @@ proxies:
       port: 10808
       startup_delay_ms: 3000
 
-  - type: "singbox"
+  - type: "process"
     name: "singbox-vmess"
     enabled: true
     config:
@@ -254,7 +295,7 @@ proxies:
       port: 10809
       startup_delay_ms: 2000
 
-  - type: "dnstt"
+  - type: "process"
     name: "dnstt-client"
     enabled: true
     config:
@@ -265,9 +306,22 @@ proxies:
         - "-pubkey"
         - "your-public-key-here"
         - "tunnel.example.com"
-        - "127.0.0.1:7300"
+        - "127.0.0.1:{PORT}"  # Port placeholder
       host: "127.0.0.1"
       port: 7300
+      startup_delay_ms: 2000
+
+  - type: "slipstream"
+    name: "slipstream-proxy"
+    enabled: true
+    config:
+      binary_path: "/usr/local/bin/slipstream"
+      resolver_ip: "1.1.1.1"
+      resolver_port: 53
+      domain: "tunnel.example.com"
+      cert_path: "/etc/slipstream/cert.pem"
+      host: "127.0.0.1"
+      port: 8080
       startup_delay_ms: 2000
 ```
 
@@ -334,6 +388,7 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
   - type: "direct"
@@ -358,6 +413,7 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
   - type: "direct"
@@ -385,9 +441,10 @@ health_check_interval_seconds: 30
 current_proxy_check_interval_seconds: 10
 connection_timeout_ms: 5000
 test_url: "http://www.google.com"
+test_rounds: 1
 
 proxies:
-  - type: "xray"
+  - type: "process"
     name: "xray-with-env"
     enabled: true
     config:

@@ -25,6 +25,11 @@ public abstract class AbstractProxyClient implements ProxyClient {
     public boolean isRunning() {
         return running.get();
     }
+    
+    @Override
+    public boolean isHealthy() {
+        return isRunning();
+    }
 
     @Override
     public String getName() {

@@ -4,6 +4,7 @@ import com.github.sepgh.config.ConfigurationManager;
 import com.github.sepgh.config.ProxyConfig;
 import com.github.sepgh.proxy.ProxyClient;
 import com.github.sepgh.proxy.ProxyClientFactory;
+import com.github.sepgh.proxy.impl.DnsTestedSlipStreamProxyClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,14 +135,67 @@ public class HealthChecker {
         if (current == null) {
             logger.warn("No current proxy selected, attempting to select one");
             selectInitialProxy();
+            
+            // If still no proxy after selection attempt, check if any are running
+            if (selectedProxy.get() == null) {
+                logger.info("Still no proxy selected, checking for running proxies");
+                for (ProxyClient client : activeClients.values()) {
+                    if (client != null && client.isRunning() && client.isHealthy()) {
+                        logger.info("Found running and healthy proxy {}, testing it", client.getName());
+                        ProxyTestResult result = proxyTester.test(client.getEndpoint());
+                        if (result.isSuccess()) {
+                            switchToProxy(client);
+                            logger.info("Successfully selected running proxy {}", client.getName());
+                            return;
+                        }
+                    }
+                }
+            }
             return;
         }
         
         logger.debug("Checking current proxy: {}", current.getName());
+        
+        // First check the proxy's own health status (important for SlipStream)
+        if (!current.isHealthy()) {
+            logger.warn("Current proxy {} reports unhealthy status", current.getName());
+            
+            // If it's a DNS-tested SlipStream client, try rotating to next DNS endpoint
+            if (current instanceof DnsTestedSlipStreamProxyClient) {
+                DnsTestedSlipStreamProxyClient dnsClient = (DnsTestedSlipStreamProxyClient) current;
+                logger.info("Attempting to rotate DNS endpoint for {}", current.getName());
+                
+                if (dnsClient.rotateToNextDnsEndpoint()) {
+                    logger.info("Successfully rotated to next DNS endpoint for {}", current.getName());
+                    return;
+                } else {
+                    logger.error("Failed to rotate to any DNS endpoint for {}, selecting new proxy", current.getName());
+                }
+            }
+            
+            selectInitialProxy();
+            return;
+        }
+        
+        // Then perform SOCKS connectivity test
         ProxyTestResult result = proxyTester.test(current.getEndpoint());
         
         if (!result.isSuccess()) {
-            logger.warn("Current proxy {} failed health check: {}", current.getName(), result.getErrorMessage());
+            logger.warn("Current proxy {} failed SOCKS connectivity test: {}", current.getName(), result.getErrorMessage());
+            
+            // If it's a DNS-tested SlipStream client, try rotating to next DNS endpoint
+            if (current instanceof DnsTestedSlipStreamProxyClient) {
+                DnsTestedSlipStreamProxyClient dnsClient = (DnsTestedSlipStreamProxyClient) current;
+                logger.info("Attempting to rotate DNS endpoint for {}", current.getName());
+                
+                if (dnsClient.rotateToNextDnsEndpoint()) {
+                    logger.info("Successfully rotated to next DNS endpoint for {}", current.getName());
+                    return;
+                } else {
+                    logger.error("Failed to rotate to any DNS endpoint for {}, selecting new proxy", current.getName());
+                }
+            }
+            
             selectInitialProxy();
         } else {
             logger.debug("Current proxy {} is healthy (latency: {}ms)", current.getName(), result.getLatencyMs());
@@ -161,19 +215,38 @@ public class HealthChecker {
                 try {
                     ProxyClient client = activeClients.computeIfAbsent(config.getName(), name -> {
                         ProxyClient newClient = ProxyClientFactory.createClient(config);
-                        try {
-                            newClient.start();
-                            return newClient;
-                        } catch (Exception e) {
-                            logger.error("Failed to start proxy client {}", name, e);
-                            return null;
+                        int retries = 3;
+                        Exception lastException = null;
+                        
+                        for (int attempt = 1; attempt <= retries; attempt++) {
+                            try {
+                                logger.debug("Starting proxy client {} (attempt {}/{})", name, attempt, retries);
+                                newClient.start();
+                                logger.info("Successfully started proxy client {} on attempt {}", name, attempt);
+                                return newClient;
+                            } catch (Exception e) {
+                                lastException = e;
+                                logger.warn("Failed to start proxy client {} on attempt {}/{}: {}", name, attempt, retries, e.getMessage());
+                                
+                                if (attempt < retries) {
+                                    try {
+                                        Thread.sleep(2000); // Wait 2 seconds before retry
+                                    } catch (InterruptedException ie) {
+                                        Thread.currentThread().interrupt();
+                                        break;
+                                    }
+                                }
+                            }
                         }
+                        
+                        logger.error("Failed to start proxy client {} after {} attempts", name, retries, lastException);
+                        return null;
                     });
                     
-                    if (client != null && client.isRunning()) {
-                        ProxyTestResult result = proxyTester.test(client.getEndpoint());
-                        results.put(client, result);
-                        logger.debug("Test result for {}: {}", client.getName(), result);
+                    // Note: Don't test here, test after all futures complete
+                    // This ensures we wait for slow-starting proxies
+                    if (client != null && !client.isRunning()) {
+                        logger.warn("Proxy client {} exists but is not running", client.getName());
                     }
                 } catch (Exception e) {
                     logger.error("Error testing proxy {}", config.getName(), e);
@@ -183,11 +256,61 @@ public class HealthChecker {
         
         for (Future<?> future : futures) {
             try {
-                future.get(30, TimeUnit.SECONDS);
+                future.get(300, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                logger.warn("Timeout waiting for proxy test (exceeded 300 seconds), will check if any proxies are running", e);
             } catch (Exception e) {
                 logger.error("Error waiting for proxy test", e);
             }
         }
+        
+        // After all futures complete, test all running proxies
+        logger.info("Testing all running proxies after startup phase");
+        for (ProxyConfig config : proxies) {
+            if (!config.isEnabled()) {
+                continue;
+            }
+            
+            ProxyClient client = activeClients.get(config.getName());
+            if (client != null && client.isRunning()) {
+                if (!results.containsKey(client)) {
+                    logger.info("Testing proxy {} that finished starting", client.getName());
+                    try {
+                        ProxyTestResult result = proxyTester.test(client.getEndpoint());
+                        results.put(client, result);
+                        logger.info("Test result for {}: success={}, latency={}ms", 
+                                  client.getName(), result.isSuccess(), result.getLatencyMs());
+                        
+                        // If SOCKS test fails and this is a DNS-tested SlipStream client, try rotating immediately
+                        if (!result.isSuccess() && client instanceof DnsTestedSlipStreamProxyClient) {
+                            DnsTestedSlipStreamProxyClient dnsClient = (DnsTestedSlipStreamProxyClient) client;
+                            logger.warn("SOCKS test failed for {}, attempting DNS rotation", client.getName());
+                            
+                            if (dnsClient.rotateToNextDnsEndpoint()) {
+                                logger.info("Successfully rotated to next DNS endpoint for {}, retesting", client.getName());
+                                // Retest after rotation
+                                ProxyTestResult retestResult = proxyTester.test(client.getEndpoint());
+                                results.put(client, retestResult);
+                                logger.info("Retest result for {}: success={}, latency={}ms", 
+                                          client.getName(), retestResult.isSuccess(), retestResult.getLatencyMs());
+                            } else {
+                                logger.error("Failed to rotate to any working DNS endpoint for {}", client.getName());
+                            }
+                        }
+                    } catch (Exception e) {
+                        logger.error("Error testing running proxy {}", client.getName(), e);
+                    }
+                } else {
+                    logger.debug("Proxy {} already tested", client.getName());
+                }
+            } else if (client != null) {
+                logger.warn("Proxy {} exists but is not running", client.getName());
+            } else {
+                logger.debug("Proxy {} not started yet", config.getName());
+            }
+        }
+        
+        logger.info("Proxy testing complete, {} results collected", results.size());
         
         return results;
     }

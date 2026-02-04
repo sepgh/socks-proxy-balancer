@@ -16,6 +16,10 @@ public class SlipStreamProxyClient extends AbstractProxyClient {
     private Process process;
     private Thread outputReaderThread;
     private Thread errorReaderThread;
+    private volatile long lastConnectionWarningTime = 0;
+    private volatile int consecutiveWarnings = 0;
+    private static final long WARNING_WINDOW_MS = 10000; // 10 seconds
+    private static final int MAX_WARNINGS_THRESHOLD = 2;
 
     public SlipStreamProxyClient(ProxyConfig config) {
         super(config);
@@ -144,12 +148,59 @@ public class SlipStreamProxyClient extends AbstractProxyClient {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                logger.debug("[{}][{}] {}", getName(), streamName, line);
+                logger.info("[{}][{}] {}", getName(), streamName, line);
+                
+                // Detect connection issues from SlipStream output
+                if (line.contains("WARN") && 
+                    (line.contains("Connection closed") || 
+                     line.contains("reconnecting") ||
+                     line.contains("Path for resolver") ||
+                     line.contains("became unavailable"))) {
+                    
+                    long now = System.currentTimeMillis();
+                    if (now - lastConnectionWarningTime < WARNING_WINDOW_MS) {
+                        consecutiveWarnings++;
+                        logger.warn("SlipStream connection warning detected ({} consecutive warnings in {}ms)", 
+                                  consecutiveWarnings, now - lastConnectionWarningTime);
+                        
+                        // If we've hit the threshold, log that we're now unhealthy
+                        if (consecutiveWarnings >= MAX_WARNINGS_THRESHOLD) {
+                            logger.error("SlipStream proxy {} has become UNHEALTHY after {} consecutive connection warnings", 
+                                       getName(), consecutiveWarnings);
+                        }
+                    } else {
+                        consecutiveWarnings = 1;
+                    }
+                    lastConnectionWarningTime = now;
+                }
             }
         } catch (IOException e) {
             if (isRunning()) {
                 logger.error("Error reading {} for {}", streamName, getName(), e);
             }
         }
+    }
+    
+    @Override
+    public boolean isHealthy() {
+        if (!isRunning()) {
+            return false;
+        }
+        
+        // Check if we're in a reconnection loop
+        long timeSinceLastWarning = System.currentTimeMillis() - lastConnectionWarningTime;
+        if (consecutiveWarnings >= MAX_WARNINGS_THRESHOLD && timeSinceLastWarning < WARNING_WINDOW_MS) {
+            logger.warn("SlipStream proxy {} is unhealthy: {} consecutive connection warnings", 
+                      getName(), consecutiveWarnings);
+            return false;
+        }
+        
+        return true;
+    }
+    
+    public void resetHealthStatus() {
+        logger.info("Resetting health status for SlipStream proxy {}", getName());
+        consecutiveWarnings = 0;
+        lastConnectionWarningTime = 0;
     }
 }

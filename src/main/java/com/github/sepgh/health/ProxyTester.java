@@ -65,9 +65,12 @@ public class ProxyTester {
 
             logger.debug("Testing proxy {} for {}:{} (URL: {})", endpoint, host, port, testUrl);
 
+            // Use shorter timeout for faster failure detection
+            int effectiveTimeout = Math.min(timeoutMs, 5000);
+            
             try (Socket proxySocket = new Socket()) {
-                proxySocket.connect(new InetSocketAddress(endpoint.getHost(), endpoint.getPort()), timeoutMs);
-                proxySocket.setSoTimeout(timeoutMs);
+                proxySocket.connect(new InetSocketAddress(endpoint.getHost(), endpoint.getPort()), effectiveTimeout);
+                proxySocket.setSoTimeout(effectiveTimeout);
                 logger.debug("Connected to proxy {}", endpoint);
 
                 if (!performSocks5Handshake(proxySocket)) {

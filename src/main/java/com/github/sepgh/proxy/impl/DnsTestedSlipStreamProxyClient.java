@@ -17,13 +17,17 @@ import java.util.stream.Collectors;
 public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
     private SlipStreamProxyClient slipStreamClient;
     private DnsEndpoint selectedDnsEndpoint;
+    private List<DnsEndpoint> sortedDnsEndpoints;
+    private int currentDnsEndpointIndex = 0;
     private final int dnsTestTimeoutMs;
     private final String dnsTestDomain;
+    private final int maxRetries;
 
     public DnsTestedSlipStreamProxyClient(ProxyConfig config) {
         super(config);
         this.dnsTestTimeoutMs = getConfigInt("dns_test_timeout_ms", 3000);
         this.dnsTestDomain = getConfigString("dns_test_domain", "www.google.com");
+        this.maxRetries = getConfigInt("max_dns_retries", 5);
     }
 
     @Override
@@ -39,27 +43,109 @@ public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
         }
 
         logger.info("Testing {} DNS endpoints for {}", dnsEndpoints.size(), getName());
-        DnsEndpoint bestDnsEndpoint = selectBestDnsEndpoint(dnsEndpoints);
+        this.sortedDnsEndpoints = selectAndSortDnsEndpoints(dnsEndpoints);
         
-        if (bestDnsEndpoint == null) {
+        if (sortedDnsEndpoints.isEmpty()) {
             throw new RuntimeException("No working DNS endpoint found for " + getName());
         }
 
-        logger.info("Selected DNS endpoint {} for {}", bestDnsEndpoint, getName());
-        this.selectedDnsEndpoint = bestDnsEndpoint;
-
-        ProxyConfig slipStreamConfig = createSlipStreamConfig(bestDnsEndpoint);
+        // Try to start with the best DNS endpoints, rotating through them if one fails
+        Exception lastException = null;
+        int attempts = Math.min(maxRetries, sortedDnsEndpoints.size());
+        
+        for (int i = 0; i < attempts; i++) {
+            DnsEndpoint dnsEndpoint = sortedDnsEndpoints.get(i);
+            logger.info("Attempting to start SlipStream with DNS endpoint {} ({}/{})", dnsEndpoint, i + 1, attempts);
+            
+            try {
+                if (startWithDnsEndpoint(dnsEndpoint)) {
+                    this.currentDnsEndpointIndex = i;
+                    this.selectedDnsEndpoint = dnsEndpoint;
+                    logger.info("DNS-tested SlipStream proxy client {} started successfully with DNS endpoint {}", getName(), dnsEndpoint);
+                    return;
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to start SlipStream with DNS endpoint {}: {}", dnsEndpoint, e.getMessage());
+                lastException = e;
+                // Clean up failed attempt
+                if (slipStreamClient != null) {
+                    try {
+                        slipStreamClient.stop();
+                    } catch (Exception stopEx) {
+                        logger.debug("Error stopping failed SlipStream client", stopEx);
+                    }
+                    slipStreamClient = null;
+                }
+            }
+        }
+        
+        throw new RuntimeException("Failed to start SlipStream with any of the " + attempts + " DNS endpoints tried", lastException);
+    }
+    
+    private boolean startWithDnsEndpoint(DnsEndpoint dnsEndpoint) throws Exception {
+        ProxyConfig slipStreamConfig = createSlipStreamConfig(dnsEndpoint);
         this.slipStreamClient = new SlipStreamProxyClient(slipStreamConfig);
         
-        try {
-            slipStreamClient.start();
-            this.endpoint = slipStreamClient.getEndpoint();
-            setRunning(true);
-            logger.info("DNS-tested SlipStream proxy client {} started successfully", getName());
-        } catch (Exception e) {
-            logger.error("Failed to start SlipStream client for {}", getName(), e);
-            throw new RuntimeException("SlipStream client failed to start: " + e.getMessage(), e);
+        slipStreamClient.start();
+        this.endpoint = slipStreamClient.getEndpoint();
+        setRunning(true);
+        return true;
+    }
+    
+    public boolean rotateToNextDnsEndpoint() {
+        if (sortedDnsEndpoints == null || sortedDnsEndpoints.isEmpty()) {
+            logger.error("No DNS endpoints available for rotation");
+            return false;
         }
+        
+        int nextIndex = currentDnsEndpointIndex + 1;
+        int attempts = 0;
+        int maxAttempts = Math.min(maxRetries, sortedDnsEndpoints.size() - nextIndex);
+        
+        while (attempts < maxAttempts) {
+            int tryIndex = (nextIndex + attempts) % sortedDnsEndpoints.size();
+            DnsEndpoint dnsEndpoint = sortedDnsEndpoints.get(tryIndex);
+            
+            logger.info("Rotating to next DNS endpoint: {} (attempt {}/{})", dnsEndpoint, attempts + 1, maxAttempts);
+            
+            // Stop current client
+            if (slipStreamClient != null) {
+                try {
+                    slipStreamClient.stop();
+                } catch (Exception e) {
+                    logger.debug("Error stopping SlipStream client during rotation", e);
+                }
+            }
+            
+            try {
+                if (startWithDnsEndpoint(dnsEndpoint)) {
+                    this.currentDnsEndpointIndex = tryIndex;
+                    this.selectedDnsEndpoint = dnsEndpoint;
+                    // Reset health status for clean slate
+                    if (slipStreamClient != null) {
+                        slipStreamClient.resetHealthStatus();
+                    }
+                    logger.info("Successfully rotated to DNS endpoint {}", dnsEndpoint);
+                    return true;
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to rotate to DNS endpoint {}: {}", dnsEndpoint, e.getMessage());
+                if (slipStreamClient != null) {
+                    try {
+                        slipStreamClient.stop();
+                    } catch (Exception stopEx) {
+                        logger.debug("Error stopping failed SlipStream client", stopEx);
+                    }
+                    slipStreamClient = null;
+                }
+            }
+            
+            attempts++;
+        }
+        
+        logger.error("Failed to rotate to any available DNS endpoint after {} attempts", attempts);
+        setRunning(false);
+        return false;
     }
 
     @Override
@@ -120,13 +206,21 @@ public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
         return endpoints;
     }
 
-    private DnsEndpoint selectBestDnsEndpoint(List<DnsEndpoint> endpoints) {
+    private List<DnsEndpoint> selectAndSortDnsEndpoints(List<DnsEndpoint> endpoints) {
         DnsTester dnsTester = new DnsTester(dnsTestTimeoutMs, dnsTestDomain);
         
         Map<DnsEndpoint, DnsTestResult> results = new HashMap<>();
+        int total = endpoints.size();
+        int tested = 0;
+        
         for (DnsEndpoint endpoint : endpoints) {
+            tested++;
             DnsTestResult result = dnsTester.test(endpoint);
             results.put(endpoint, result);
+            
+            if (tested % 10 == 0 || tested == total) {
+                logger.info("DNS testing progress: {}/{} endpoints tested", tested, total);
+            }
             logger.debug("DNS test result for {}: {}", endpoint, result);
         }
 
@@ -137,15 +231,17 @@ public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
 
         if (sortedResults.isEmpty()) {
             logger.error("No DNS endpoints passed the test");
-            return null;
+            return new ArrayList<>();
         }
 
         logger.info("DNS endpoints sorted by latency:");
+        List<DnsEndpoint> sortedEndpoints = new ArrayList<>();
         for (Map.Entry<DnsEndpoint, DnsTestResult> entry : sortedResults) {
             logger.info("  {} - {}ms", entry.getKey(), entry.getValue().getLatencyMs());
+            sortedEndpoints.add(entry.getKey());
         }
 
-        return sortedResults.get(0).getKey();
+        return sortedEndpoints;
     }
 
     private ProxyConfig createSlipStreamConfig(DnsEndpoint dnsEndpoint) {
@@ -165,5 +261,19 @@ public class DnsTestedSlipStreamProxyClient extends AbstractProxyClient {
 
     public DnsEndpoint getSelectedDnsEndpoint() {
         return selectedDnsEndpoint;
+    }
+    
+    @Override
+    public boolean isHealthy() {
+        if (!isRunning()) {
+            return false;
+        }
+        
+        // Delegate to underlying SlipStream client's health status
+        if (slipStreamClient != null) {
+            return slipStreamClient.isHealthy();
+        }
+        
+        return false;
     }
 }

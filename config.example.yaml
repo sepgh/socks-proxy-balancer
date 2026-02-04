@@ -1,0 +1,146 @@
+# SOCKS Proxy Load Balancer Configuration Example
+# Copy this file to config.yaml and customize for your setup
+
+# SOCKS server binding configuration
+listen_host: "127.0.0.1"
+listen_port: 1080
+
+# Health check intervals (in seconds)
+health_check_interval_seconds: 30          # Check all proxies every 30 seconds
+current_proxy_check_interval_seconds: 10   # Check current proxy every 10 seconds
+
+# Connection settings
+connection_timeout_ms: 5000                # Connection timeout for tests
+test_url: "http://www.google.com"          # URL to test proxy connectivity
+test_rounds: 3                             # Number of test rounds for averaging latency
+
+# Proxy configurations
+proxies:
+  # Example 1: Direct SOCKS Proxy
+  # Use this for existing SOCKS proxies that are already running
+  - type: "direct"
+    name: "public-socks-proxy"
+    enabled: true
+    config:
+      host: "proxy.example.com"
+      port: 1080
+
+  # Example 2: Process-Based Proxy (Generic)
+  # Use this for any proxy tool that needs to be started as a subprocess
+  - type: "process"
+    name: "xray-vless"
+    enabled: true
+    config:
+      command: "/usr/local/bin/xray"
+      args:
+        - "run"
+        - "-c"
+        - "/etc/xray/config.json"
+      host: "127.0.0.1"
+      port: 10808
+      startup_delay_ms: 3000
+      working_dir: "/etc/xray"  # Optional
+      env:                       # Optional environment variables
+        XRAY_LOCATION_ASSET: "/usr/local/share/xray"
+
+  # Example 3: Process-Based Proxy with Port Placeholder
+  # The {PORT} placeholder will be replaced with the actual port number
+  - type: "process"
+    name: "dnstt-client"
+    enabled: true
+    config:
+      command: "/usr/local/bin/dnstt-client"
+      args:
+        - "-doh"
+        - "https://dns.example.com/dns-query"
+        - "-pubkey-file"
+        - "/etc/dnstt/server.pub"
+        - "tunnel.example.com"
+        - "127.0.0.1:{PORT}"  # {PORT} will be replaced with 7000
+      host: "127.0.0.1"
+      port: 7000
+      startup_delay_ms: 2000
+
+  # Example 4: Sing-box Process
+  - type: "process"
+    name: "singbox-vmess"
+    enabled: false  # Disabled by default
+    config:
+      command: "/usr/local/bin/sing-box"
+      args:
+        - "run"
+        - "-c"
+        - "/etc/sing-box/config.json"
+      host: "127.0.0.1"
+      port: 10809
+      startup_delay_ms: 2000
+
+  # Example 5: SlipStream Proxy
+  # For SlipStream with manual DNS resolver configuration
+  - type: "slipstream"
+    name: "slipstream-manual"
+    enabled: false
+    config:
+      binary_path: "/usr/local/bin/slipstream"
+      resolver_ip: "8.8.8.8"              # Google DNS
+      resolver_port: 53                    # Default DNS port
+      domain: "tunnel.example.com"         # Your SlipStream domain
+      cert_path: "/etc/slipstream/cert.pem"  # Certificate file (must exist)
+      host: "127.0.0.1"
+      port: 8000
+      startup_delay_ms: 2000
+
+  # Example 6: DNS-Tested SlipStream Proxy (Recommended)
+  # Automatically tests multiple DNS resolvers and uses the fastest one
+  - type: "dns-tested-slipstream"
+    name: "slipstream-auto"
+    enabled: true
+    config:
+      binary_path: "/usr/local/bin/slipstream"
+      domain: "tunnel.example.com"
+      cert_path: "/etc/slipstream/cert.pem"
+      host: "127.0.0.1"
+      port: 8001
+      startup_delay_ms: 2000
+      
+      # List of DNS endpoints to test (inline format)
+      dns_endpoints:
+        - "8.8.8.8:53"          # Google DNS Primary
+        - "8.8.4.4:53"          # Google DNS Secondary
+        - "1.1.1.1:53"          # Cloudflare DNS Primary
+        - "1.0.0.1:53"          # Cloudflare DNS Secondary
+        - "9.9.9.9:53"          # Quad9 DNS
+        - "208.67.222.222:53"   # OpenDNS Primary
+        - "208.67.220.220:53"   # OpenDNS Secondary
+      
+      # DNS testing configuration
+      dns_test_timeout_ms: 3000
+      dns_test_domain: "www.google.com"
+
+  # Example 7: DNS-Tested SlipStream with File-Based DNS List
+  # Load DNS endpoints from a file instead of inline list
+  - type: "dns-tested-slipstream"
+    name: "slipstream-from-file"
+    enabled: false
+    config:
+      binary_path: "/usr/local/bin/slipstream"
+      domain: "tunnel.example.com"
+      cert_path: "/etc/slipstream/cert.pem"
+      host: "127.0.0.1"
+      port: 8002
+      startup_delay_ms: 2000
+      
+      # Load DNS endpoints from file (one per line)
+      dns_endpoints_file: "/etc/slipstream/dns-servers.txt"
+      
+      dns_test_timeout_ms: 3000
+      dns_test_domain: "www.google.com"
+
+# Notes:
+# - Only enabled proxies will be started and tested
+# - The load balancer automatically selects the fastest working proxy
+# - Proxies are continuously monitored and switched if they fail
+# - Use test_rounds > 1 for more accurate latency measurements
+# - DNS-tested SlipStream automatically finds the best DNS resolver
+# - Port placeholder {PORT} works in both command and args
+# - Certificate and binary paths are validated on startup

@@ -10,6 +10,8 @@ public interface ProxyClient {
     ProxyEndpoint getEndpoint();
 
     boolean isRunning();
+    
+    boolean isHealthy();
 
     String getName();
 

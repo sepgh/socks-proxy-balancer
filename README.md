@@ -1,13 +1,21 @@
 # SOCKS Proxy Load Balancer
 
-A high-performance SOCKS proxy load balancer written in Java that automatically selects and forwards traffic to the best available proxy backend. Supports multiple proxy types including direct SOCKS proxies, Xray, Sing-box, DNSTT, Slipstream, and custom process-based proxies.
+A high-performance SOCKS proxy load balancer written in Java that automatically selects and forwards traffic to the best available proxy backend. Supports multiple proxy types including direct SOCKS proxies, process-based proxies, SlipStream with DNS testing, and custom implementations.
 
 ## Features
 
 - **Automatic Proxy Selection**: Continuously monitors proxy health and automatically switches to the best performing proxy
-- **Multiple Proxy Types**: Support for direct SOCKS proxies and process-based proxies (Xray, Sing-box, DNSTT, Slipstream, etc.)
+- **Multiple Proxy Types**: Support for:
+  - Direct SOCKS proxies
+  - Process-based proxies (any command-line proxy tool)
+  - SlipStream with certificate validation
+  - DNS-tested SlipStream with automatic DNS resolver selection
 - **Health Checking**: Periodic health checks with configurable intervals and automatic failover
+- **Multi-Round Testing**: Configurable test rounds for accurate average latency measurements
+- **DNS Resolver Testing**: Automatic DNS endpoint testing and selection for SlipStream
+- **Port Placeholder**: Dynamic port injection into subprocess commands
 - **Thread-Safe Configuration**: Dynamic configuration management with thread-safe access
+- **Cross-Platform**: Works on Linux, Windows, and macOS
 - **GraalVM Native Image**: Build native executables for fast startup and low memory footprint
 - **Extensible Architecture**: Clean interfaces for adding custom proxy client implementations
 
@@ -23,11 +31,13 @@ The application consists of several key components:
 
 ## Building
 
-### Standard JAR
+### Standard JAR (All Platforms)
 
 ```bash
 mvn clean package
 ```
+
+This creates `target/proxy-balancer.jar` - a fat JAR with all dependencies included.
 
 ### GraalVM Native Image
 
@@ -37,12 +47,7 @@ Requires GraalVM with native-image installed:
 mvn clean package -Pnative
 ```
 
-Or manually:
-
-```bash
-mvn clean package
-native-image -jar target/dnstt-client-balancer-1.0-SNAPSHOT.jar
-```
+This creates a platform-specific native binary in `target/proxy-balancer` (or `proxy-balancer.exe` on Windows).
 
 ## Configuration
 
@@ -89,6 +94,7 @@ proxies:
 - `current_proxy_check_interval_seconds`: How often to check the current proxy (default: 10)
 - `connection_timeout_ms`: Connection timeout for proxy tests (default: 5000)
 - `test_url`: URL to test proxy connectivity (default: http://www.google.com)
+- `test_rounds`: Number of test rounds for averaging latency (default: 1)
 
 #### Proxy Types
 
@@ -105,12 +111,12 @@ For existing SOCKS proxies:
     port: 1080
 ```
 
-##### Process-Based Proxy (Xray, Sing-box, DNSTT, Slipstream, etc.)
+##### Process-Based Proxy
 
-For proxies that need to be started as subprocesses:
+For any proxy tool that needs to be started as a subprocess. Use `{PORT}` placeholder for dynamic port injection:
 
 ```yaml
-- type: "xray"  # or "singbox", "dnstt", "slipstream"
+- type: "process"
   name: "my-xray-proxy"
   enabled: true
   config:
@@ -127,12 +133,117 @@ For proxies that need to be started as subprocesses:
       LOG_LEVEL: "info"
 ```
 
+**Port Placeholder Example:**
+
+```yaml
+- type: "process"
+  name: "dnstt-client"
+  enabled: true
+  config:
+    command: "/usr/local/bin/dnstt-client"
+    args:
+      - "-doh"
+      - "https://dns.example.com/dns-query"
+      - "-pubkey-file"
+      - "/etc/dnstt/pubkey"
+      - "example.com"
+      - "127.0.0.1:{PORT}"  # {PORT} will be replaced with actual port
+    host: "127.0.0.1"
+    port: 7000
+    startup_delay_ms: 2000
+```
+
+##### SlipStream Proxy
+
+For SlipStream with certificate validation:
+
+```yaml
+- type: "slipstream"
+  name: "slipstream-proxy"
+  enabled: true
+  config:
+    binary_path: "/usr/local/bin/slipstream"
+    resolver_ip: "8.8.8.8"  # DNS resolver IP
+    resolver_port: 53        # DNS resolver port (default: 53)
+    domain: "example.com"    # Target domain
+    cert_path: "/etc/slipstream/cert.pem"  # Certificate file (must exist)
+    host: "127.0.0.1"
+    port: 8000
+    startup_delay_ms: 2000
+```
+
+**Configuration Requirements:**
+- `binary_path`: Must exist and be executable (on Linux/macOS)
+- `cert_path`: Must exist and be readable
+- `domain`: Required
+- `resolver_ip`: Defaults to 127.0.0.1
+- `resolver_port`: Defaults to 53
+
+##### DNS-Tested SlipStream Proxy
+
+Automatically tests multiple DNS resolvers and selects the fastest one:
+
+```yaml
+- type: "dns-tested-slipstream"
+  name: "smart-slipstream"
+  enabled: true
+  config:
+    binary_path: "/usr/local/bin/slipstream"
+    domain: "example.com"
+    cert_path: "/etc/slipstream/cert.pem"
+    host: "127.0.0.1"
+    port: 8000
+    startup_delay_ms: 2000
+    
+    # DNS endpoints to test (list format)
+    dns_endpoints:
+      - "8.8.8.8:53"
+      - "1.1.1.1:53"
+      - "9.9.9.9:53"
+      - "208.67.222.222:53"
+    
+    # OR load from file (one endpoint per line)
+    dns_endpoints_file: "/etc/slipstream/dns-servers.txt"
+    
+    # DNS testing configuration
+    dns_test_timeout_ms: 3000
+    dns_test_domain: "www.google.com"  # Domain to query for testing
+```
+
+**DNS Endpoints File Format (`dns-servers.txt`):**
+```
+# Google DNS
+8.8.8.8:53
+8.8.4.4:53
+
+# Cloudflare DNS
+1.1.1.1:53
+1.0.0.1:53
+
+# Quad9 DNS
+9.9.9.9:53
+
+# OpenDNS
+208.67.222.222:53
+208.67.220.220:53
+```
+
+**How it works:**
+1. Tests all DNS endpoints by sending DNS queries
+2. Sorts them by latency (fastest first)
+3. Uses the fastest DNS resolver with SlipStream
+4. Only starts if at least one DNS endpoint works
+
 ## Running
 
-### With JAR
+### With JAR (Any Platform)
 
 ```bash
-java -jar target/dnstt-client-balancer-1.0-SNAPSHOT.jar [config-path]
+# Linux/macOS
+java -jar target/proxy-balancer.jar [config-path]
+
+# Windows
+java -jar target\proxy-balancer.jar [config-path]
 ```
 
 If no config path is provided, it looks for `config.yaml` in the current directory.
@@ -140,7 +251,11 @@ If no config path is provided, it looks for `config.yaml` in the current directo
 ### With Native Image
 
 ```bash
+# Linux/macOS
 ./proxy-balancer [config-path]
+
+# Windows
+proxy-balancer.exe [config-path]
 ```
 
 ## Usage
