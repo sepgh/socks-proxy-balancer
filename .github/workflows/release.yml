@@ -123,7 +123,7 @@ jobs:
         restore-keys: ${{ runner.os }}-m2
         
     - name: Build JAR with dependencies
-      run: mvn clean package -DskipTests
+      run: mvn clean package -DskipTests -Dnative.skip=true
       
     - name: Upload JAR artifact
       uses: actions/upload-artifact@v4
