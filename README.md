@@ -2,6 +2,9 @@
 
 A high-performance SOCKS proxy load balancer written in Java that automatically selects and forwards traffic to the best available proxy backend. Supports multiple proxy types including direct SOCKS proxies, process-based proxies, SlipStream with DNS testing, and custom implementations.
 
+**Important Note**: This project is not a full SOCKS implementation that negotiates/chooses between SOCKS versions. It mostly acts as a TCP forwarder / balancer in front of one or more upstream proxy endpoints.
+The goal of the project however is to host both socks and http proxy as listener. As a result, for now, despite the word "SOCKS" being used everywhere in the documentation, the project actually forwards TCP traffic to any upstream proxy server. But the health check and tests only support "socks" protocol.
+
 ## Features
 
 - **Automatic Proxy Selection**: Continuously monitors proxy health and automatically switches to the best performing proxy
