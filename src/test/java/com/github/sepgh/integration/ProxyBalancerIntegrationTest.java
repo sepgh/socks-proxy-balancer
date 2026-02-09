@@ -122,6 +122,7 @@ public class ProxyBalancerIntegrationTest {
         config.setHealthCheckIntervalSeconds(5);
         config.setCurrentProxyCheckIntervalSeconds(2);
         config.setConnectionTimeoutMs(3000);
+        config.setSwitchThresholdMs(50);
         config.setTestUrl("http://" + TEST_HOST + ":" + HTTP_SERVER_PORT);
         
         ProxyConfig fastProxyConfig = new ProxyConfig();
