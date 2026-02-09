@@ -30,6 +30,9 @@ public class ApplicationConfig {
     @JsonProperty("network_interface")
     private String networkInterface = null;
 
+    @JsonProperty("switch_threshold_ms")
+    private long switchThresholdMs = 250;
+
     @JsonProperty("proxies")
     private List<ProxyConfig> proxies = new ArrayList<>();
 
@@ -103,5 +106,13 @@ public class ApplicationConfig {
 
     public void setNetworkInterface(String networkInterface) {
         this.networkInterface = networkInterface;
+    }
+
+    public long getSwitchThresholdMs() {
+        return switchThresholdMs;
+    }
+
+    public void setSwitchThresholdMs(long switchThresholdMs) {
+        this.switchThresholdMs = switchThresholdMs;
     }
 }

@@ -23,6 +23,10 @@ log_subprocess_output: false               # Log subprocess output (default: fal
 # Examples: "eth0" (Linux), "en0" (macOS), "Ethernet" (Windows)
 network_interface: null
 
+# Only when "(latency of current config) - (latency of faster tested config) > threshold" we switch to the
+# faster config. It's in MS format
+switch_threshold_ms: 100
+
 # Proxy configurations
 proxies:
   # Example 1: Direct SOCKS Proxy

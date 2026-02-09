@@ -6,6 +6,8 @@ import com.github.sepgh.network.NetworkInterfaceMonitor;
 import com.github.sepgh.proxy.ProxyClient;
 import com.github.sepgh.proxy.ProxyClientFactory;
 import com.github.sepgh.proxy.impl.DnsTestedSlipStreamProxyClient;
+import com.github.sepgh.proxy.impl.ProcessProxyClient;
+import com.github.sepgh.proxy.impl.SlipStreamProxyClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,12 +38,14 @@ public class HealthChecker {
     private volatile boolean running = false;
     private final int healthCheckIntervalSeconds;
     private final int currentProxyCheckIntervalSeconds;
+    private final long switchThresholdMs;
 
     public HealthChecker(ConfigurationManager configManager, ProxyTester proxyTester) {
         this.configManager = configManager;
         this.proxyTester = proxyTester;
         this.healthCheckIntervalSeconds = configManager.getConfig().getHealthCheckIntervalSeconds();
         this.currentProxyCheckIntervalSeconds = configManager.getConfig().getCurrentProxyCheckIntervalSeconds();
+        this.switchThresholdMs = configManager.getConfig().getSwitchThresholdMs();
         
         String networkInterface = configManager.getConfig().getNetworkInterface();
         this.networkMonitor = new NetworkInterfaceMonitor(networkInterface);
@@ -137,14 +141,41 @@ public class HealthChecker {
         
         if (bestProxy == null) {
             logger.warn("No working proxy found during health check");
+            // If current proxy is a subprocess and failing, restart it since nothing else works
+            if (current != null && isSubprocessProxy(current)) {
+                logger.info("No alternatives available, restarting current subprocess proxy: {}", current.getName());
+                restartSubprocessProxy(current);
+            }
+            stopNonSelectedSubprocessClients(current);
             return;
         }
         
         if (bestProxy != current) {
-            logger.info("Switching to better proxy: {}", bestProxy.getName());
+            // Apply latency threshold: only switch if the best proxy is faster by more than the threshold
+            ProxyTestResult currentResult = current != null ? results.get(current) : null;
+            ProxyTestResult bestResult = results.get(bestProxy);
+            
+            if (currentResult != null && currentResult.isSuccess() && bestResult != null) {
+                long currentLatency = currentResult.getLatencyMs();
+                long bestLatency = bestResult.getLatencyMs();
+                long improvement = currentLatency - bestLatency;
+                
+                if (improvement <= switchThresholdMs) {
+                    logger.info("Best proxy {} ({}ms) is not faster than current {} ({}ms) by more than threshold ({}ms), keeping current",
+                            bestProxy.getName(), bestLatency, current.getName(), currentLatency, switchThresholdMs);
+                    stopNonSelectedSubprocessClients(current);
+                    return;
+                }
+                
+                logger.info("Best proxy {} ({}ms) is faster than current {} ({}ms) by {}ms (threshold: {}ms), switching",
+                        bestProxy.getName(), bestLatency, current.getName(), currentLatency, improvement, switchThresholdMs);
+            }
+            
             switchToProxy(bestProxy);
+            stopNonSelectedSubprocessClients(bestProxy);
         } else {
             logger.debug("Current proxy {} is still the best option", current.getName());
+            stopNonSelectedSubprocessClients(current);
         }
     }
 
@@ -367,6 +398,44 @@ public class HealthChecker {
             }
         }
         activeClients.clear();
+    }
+
+    private void stopNonSelectedSubprocessClients(ProxyClient selectedClient) {
+        for (Map.Entry<String, ProxyClient> entry : activeClients.entrySet()) {
+            ProxyClient client = entry.getValue();
+            if (client != selectedClient && isSubprocessProxy(client) && client.isRunning()) {
+                logger.info("Stopping non-selected subprocess proxy: {}", client.getName());
+                try {
+                    client.stop();
+                } catch (Exception e) {
+                    logger.error("Error stopping non-selected subprocess proxy {}", client.getName(), e);
+                }
+                activeClients.remove(entry.getKey());
+            }
+        }
+    }
+
+    private void restartSubprocessProxy(ProxyClient client) {
+        logger.info("Attempting to restart subprocess proxy: {}", client.getName());
+        try {
+            client.stop();
+        } catch (Exception e) {
+            logger.warn("Error stopping subprocess proxy {} before restart: {}", client.getName(), e.getMessage());
+        }
+        activeClients.remove(client.getName());
+        try {
+            client.start();
+            activeClients.put(client.getName(), client);
+            logger.info("Successfully restarted subprocess proxy: {}", client.getName());
+        } catch (Exception e) {
+            logger.error("Failed to restart subprocess proxy {}: {}", client.getName(), e.getMessage());
+        }
+    }
+
+    private boolean isSubprocessProxy(ProxyClient client) {
+        return client instanceof ProcessProxyClient
+            || client instanceof SlipStreamProxyClient
+            || client instanceof DnsTestedSlipStreamProxyClient;
     }
 
     public ProxyClient getSelectedProxy() {
