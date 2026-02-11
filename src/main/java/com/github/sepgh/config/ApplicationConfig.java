@@ -24,6 +24,9 @@ public class ApplicationConfig {
     @JsonProperty("test_url")
     private String testUrl = "http://www.google.com";
 
+    @JsonProperty("test_rounds")
+    private int testRounds = 1;
+
     @JsonProperty("log_subprocess_output")
     private boolean logSubprocessOutput = false;
 
@@ -32,6 +35,30 @@ public class ApplicationConfig {
 
     @JsonProperty("switch_threshold_ms")
     private long switchThresholdMs = 250;
+
+    @JsonProperty("status_enabled")
+    private boolean statusEnabled = false;
+
+    @JsonProperty("status_host")
+    private String statusHost = "127.0.0.1";
+
+    @JsonProperty("status_port")
+    private int statusPort = 9080;
+
+    @JsonProperty("so_rcvbuf")
+    private int soRcvBuf = 131072;
+
+    @JsonProperty("so_sndbuf")
+    private int soSndBuf = 131072;
+
+    @JsonProperty("log_file_enabled")
+    private boolean logFileEnabled = false;
+
+    @JsonProperty("log_file_path")
+    private String logFilePath = "/var/log/proxy-balancer/proxy-balancer.log";
+
+    @JsonProperty("log_file_rotation_hours")
+    private int logFileRotationHours = 24;
 
     @JsonProperty("proxies")
     private List<ProxyConfig> proxies = new ArrayList<>();
@@ -84,6 +111,14 @@ public class ApplicationConfig {
         this.testUrl = testUrl;
     }
 
+    public int getTestRounds() {
+        return testRounds;
+    }
+
+    public void setTestRounds(int testRounds) {
+        this.testRounds = testRounds;
+    }
+
     public List<ProxyConfig> getProxies() {
         return proxies;
     }
@@ -114,5 +149,69 @@ public class ApplicationConfig {
 
     public void setSwitchThresholdMs(long switchThresholdMs) {
         this.switchThresholdMs = switchThresholdMs;
+    }
+
+    public boolean isStatusEnabled() {
+        return statusEnabled;
+    }
+
+    public void setStatusEnabled(boolean statusEnabled) {
+        this.statusEnabled = statusEnabled;
+    }
+
+    public String getStatusHost() {
+        return statusHost;
+    }
+
+    public void setStatusHost(String statusHost) {
+        this.statusHost = statusHost;
+    }
+
+    public int getStatusPort() {
+        return statusPort;
+    }
+
+    public void setStatusPort(int statusPort) {
+        this.statusPort = statusPort;
+    }
+
+    public int getSoRcvBuf() {
+        return soRcvBuf;
+    }
+
+    public void setSoRcvBuf(int soRcvBuf) {
+        this.soRcvBuf = soRcvBuf;
+    }
+
+    public int getSoSndBuf() {
+        return soSndBuf;
+    }
+
+    public void setSoSndBuf(int soSndBuf) {
+        this.soSndBuf = soSndBuf;
+    }
+
+    public boolean isLogFileEnabled() {
+        return logFileEnabled;
+    }
+
+    public void setLogFileEnabled(boolean logFileEnabled) {
+        this.logFileEnabled = logFileEnabled;
+    }
+
+    public String getLogFilePath() {
+        return logFilePath;
+    }
+
+    public void setLogFilePath(String logFilePath) {
+        this.logFilePath = logFilePath;
+    }
+
+    public int getLogFileRotationHours() {
+        return logFileRotationHours;
+    }
+
+    public void setLogFileRotationHours(int logFileRotationHours) {
+        this.logFileRotationHours = logFileRotationHours;
     }
 }

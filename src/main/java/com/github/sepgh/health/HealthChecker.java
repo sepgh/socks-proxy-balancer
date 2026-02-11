@@ -11,7 +11,9 @@ import com.github.sepgh.proxy.impl.SlipStreamProxyClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +41,8 @@ public class HealthChecker {
     private final int healthCheckIntervalSeconds;
     private final int currentProxyCheckIntervalSeconds;
     private final long switchThresholdMs;
+    private volatile Instant selectedProxySince;
+    private volatile Map<String, ProxyTestResult> lastTestResults = new ConcurrentHashMap<>();
 
     public HealthChecker(ConfigurationManager configManager, ProxyTester proxyTester) {
         this.configManager = configManager;
@@ -151,11 +155,11 @@ public class HealthChecker {
         }
         
         if (bestProxy != current) {
-            // Apply latency threshold: only switch if the best proxy is faster by more than the threshold
             ProxyTestResult currentResult = current != null ? results.get(current) : null;
             ProxyTestResult bestResult = results.get(bestProxy);
             
             if (currentResult != null && currentResult.isSuccess() && bestResult != null) {
+                // Current proxy is working — only switch if the improvement exceeds threshold
                 long currentLatency = currentResult.getLatencyMs();
                 long bestLatency = bestResult.getLatencyMs();
                 long improvement = currentLatency - bestLatency;
@@ -169,6 +173,16 @@ public class HealthChecker {
                 
                 logger.info("Best proxy {} ({}ms) is faster than current {} ({}ms) by {}ms (threshold: {}ms), switching",
                         bestProxy.getName(), bestLatency, current.getName(), currentLatency, improvement, switchThresholdMs);
+            } else if (current != null && currentResult == null && current.isRunning() && current.isHealthy()) {
+                // Current proxy was not in results (e.g. skipped) but is still running and reports healthy.
+                // Don't switch — let checkCurrentProxy handle failure detection via its own SOCKS test.
+                logger.info("Current proxy {} was not tested this round but is still running and healthy, keeping current",
+                        current.getName());
+                stopNonSelectedSubprocessClients(current);
+                return;
+            } else if (current != null && currentResult != null && !currentResult.isSuccess()) {
+                // Current proxy explicitly failed — switch to best
+                logger.info("Current proxy {} failed health check, switching to {}", current.getName(), bestProxy.getName());
             }
             
             switchToProxy(bestProxy);
@@ -369,6 +383,13 @@ public class HealthChecker {
         
         logger.info("Proxy testing complete, {} results collected", results.size());
         
+        // Store results for status reporting
+        Map<String, ProxyTestResult> namedResults = new ConcurrentHashMap<>();
+        for (Map.Entry<ProxyClient, ProxyTestResult> entry : results.entrySet()) {
+            namedResults.put(entry.getKey().getName(), entry.getValue());
+        }
+        this.lastTestResults = namedResults;
+        
         return results;
     }
 
@@ -382,6 +403,7 @@ public class HealthChecker {
 
     private void switchToProxy(ProxyClient newProxy) {
         ProxyClient oldProxy = selectedProxy.getAndSet(newProxy);
+        selectedProxySince = Instant.now();
         if (oldProxy != null && oldProxy != newProxy) {
             logger.info("Switched from proxy {} to {}", oldProxy.getName(), newProxy.getName());
         } else {
@@ -440,5 +462,13 @@ public class HealthChecker {
 
     public ProxyClient getSelectedProxy() {
         return selectedProxy.get();
+    }
+
+    public Instant getSelectedProxySince() {
+        return selectedProxySince;
+    }
+
+    public Map<String, ProxyTestResult> getLastTestResults() {
+        return Collections.unmodifiableMap(lastTestResults);
     }
 }

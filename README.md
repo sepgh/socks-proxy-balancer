@@ -204,6 +204,63 @@ proxies:
 - `test_rounds`: Number of test rounds for averaging latency (default: 1)
 - `log_subprocess_output`: Enable subprocess output logging (default: false, set true for debugging)
 - `network_interface`: Network interface to monitor (optional, examples: "eth0" (Linux), "en0" (macOS), "Ethernet" (Windows))
+- `switch_threshold_ms`: Minimum latency improvement (ms) required before switching proxies (default: 250)
+- `so_rcvbuf`: Socket receive buffer size in bytes (default: 131072 / 128KB)
+- `so_sndbuf`: Socket send buffer size in bytes (default: 131072 / 128KB)
+
+#### Status HTTP API
+
+A lightweight HTTP status endpoint can be enabled to monitor the application at runtime.
+
+- `status_enabled`: Enable the status HTTP server (default: false)
+- `status_host`: IP address to bind the status server (default: 127.0.0.1)
+- `status_port`: Port to bind the status server (default: 9080)
+
+When enabled, `GET /status` returns JSON with:
+
+| Field | Description |
+|-------|-------------|
+| `selected_proxy` | Name of the currently active proxy |
+| `selected_since` | ISO-8601 timestamp of when the current proxy was selected |
+| `selected_duration_seconds` | How long the current proxy has been active (without restart) |
+| `listen_host` / `listen_port` | SOCKS server binding address |
+| `proxy_latencies` | Last measured latency and success status for each tested proxy |
+
+Example:
+
+```bash
+curl http://127.0.0.1:9080/status
+```
+
+```json
+{
+  "selected_proxy": "fast-proxy",
+  "selected_since": "2025-01-15T10:30:00Z",
+  "selected_duration_seconds": 3600,
+  "listen_host": "127.0.0.1",
+  "listen_port": 1080,
+  "proxy_latencies": {
+    "fast-proxy": {"success": true, "latency_ms": 45},
+    "slow-proxy": {"success": true, "latency_ms": 320}
+  }
+}
+```
+
+#### File Logging
+
+By default only console logging is active. File logging with time-based rotation can be enabled:
+
+- `log_file_enabled`: Enable file logging (default: false)
+- `log_file_path`: Path to the log file (default: `/var/log/proxy-balancer/proxy-balancer.log`)
+- `log_file_rotation_hours`: Rotation interval in hours (default: 24). Use `1` for hourly, `24` for daily.
+
+Rotated files are compressed (`.gz`) and kept for 30 periods. The parent directory is created automatically if it doesn't exist.
+
+```yaml
+log_file_enabled: true
+log_file_path: "/var/log/proxy-balancer/proxy-balancer.log"
+log_file_rotation_hours: 24
+```
 
 #### Proxy Types
 
@@ -428,13 +485,23 @@ configManager.updateProxyEnabled("proxy-name", false);
 
 ## Logging
 
-The application uses SLF4J with a simple logger. Configure logging by setting system properties:
+The application uses SLF4J with Logback. Console logging is always active at INFO level.
+
+To change the log level at runtime, edit `logback.xml` in the classpath or set system properties:
 
 ```bash
-java -Dorg.slf4j.simpleLogger.defaultLogLevel=debug -jar target/dnstt-client-balancer-1.0-SNAPSHOT.jar
+java -Dlogback.configurationFile=/path/to/logback.xml -jar target/proxy-balancer.jar
 ```
 
-Log levels: `trace`, `debug`, `info`, `warn`, `error`
+For file logging with rotation, add to `config.yaml`:
+
+```yaml
+log_file_enabled: true
+log_file_path: "/var/log/proxy-balancer/proxy-balancer.log"
+log_file_rotation_hours: 24
+```
+
+See [File Logging](#file-logging) in the configuration section for details.
 
 
 ## License

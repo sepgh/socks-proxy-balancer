@@ -27,6 +27,30 @@ network_interface: null
 # faster config. It's in MS format
 switch_threshold_ms: 100
 
+# Status HTTP API (disabled by default)
+# When enabled, exposes a GET /status endpoint returning JSON with:
+#   - selected_proxy: currently active proxy name
+#   - selected_since: ISO-8601 timestamp of selection
+#   - selected_duration_seconds: how long the current proxy has been active
+#   - listen_host / listen_port: SOCKS server binding
+#   - proxy_latencies: last measured latency for each proxy
+# Example: curl http://127.0.0.1:9080/status
+status_enabled: false
+status_host: "127.0.0.1"
+status_port: 9080
+
+# Socket buffer sizes (bytes). Applies to both client and backend sockets.
+# Larger buffers may improve throughput. Default: 131072 (128KB)
+so_rcvbuf: 131072
+so_sndbuf: 131072
+
+# File logging (disabled by default, console logging is always active)
+# When enabled, logs are written to the specified file with time-based rotation.
+# Rotated files are compressed (.gz) and kept for 30 periods.
+log_file_enabled: false
+log_file_path: "/var/log/proxy-balancer/proxy-balancer.log"
+log_file_rotation_hours: 24    # Rotation interval: 1=hourly, 24=daily
+
 # Proxy configurations
 proxies:
   # Example 1: Direct SOCKS Proxy

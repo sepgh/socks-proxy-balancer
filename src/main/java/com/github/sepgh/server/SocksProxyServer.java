@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketOptions;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -20,21 +19,27 @@ public class SocksProxyServer {
     private static final Logger logger = LoggerFactory.getLogger(SocksProxyServer.class);
     
     private static final int BUFFER_SIZE = 65536; // 64KB for better throughput
-    private static final int SO_RCVBUF = 262144; // 256KB receive buffer
-    private static final int SO_SNDBUF = 262144; // 256KB send buffer
     
     private final String host;
     private final int port;
     private final HealthChecker healthChecker;
+    private final int soRcvBuf;
+    private final int soSndBuf;
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ServerSocket serverSocket;
     private Thread acceptThread;
 
     public SocksProxyServer(String host, int port, HealthChecker healthChecker) {
+        this(host, port, healthChecker, 131072, 131072);
+    }
+
+    public SocksProxyServer(String host, int port, HealthChecker healthChecker, int soRcvBuf, int soSndBuf) {
         this.host = host;
         this.port = port;
         this.healthChecker = healthChecker;
+        this.soRcvBuf = soRcvBuf;
+        this.soSndBuf = soSndBuf;
     }
 
     public void start() throws IOException {
@@ -45,7 +50,7 @@ public class SocksProxyServer {
 
         serverSocket = new ServerSocket();
         serverSocket.setReuseAddress(true);
-        serverSocket.setReceiveBufferSize(SO_RCVBUF);
+        serverSocket.setReceiveBufferSize(soRcvBuf);
         serverSocket.bind(new InetSocketAddress(host, port));
         running.set(true);
 
@@ -96,8 +101,8 @@ public class SocksProxyServer {
                 // Optimize client socket
                 clientSocket.setTcpNoDelay(true);
                 clientSocket.setKeepAlive(true);
-                clientSocket.setReceiveBufferSize(SO_RCVBUF);
-                clientSocket.setSendBufferSize(SO_SNDBUF);
+                clientSocket.setReceiveBufferSize(soRcvBuf);
+                clientSocket.setSendBufferSize(soSndBuf);
                 
                 logger.debug("Accepted connection from {}", clientSocket.getRemoteSocketAddress());
                 
@@ -127,8 +132,8 @@ public class SocksProxyServer {
                 // Optimize backend socket
                 backendSocket.setTcpNoDelay(true);
                 backendSocket.setKeepAlive(true);
-                backendSocket.setReceiveBufferSize(SO_RCVBUF);
-                backendSocket.setSendBufferSize(SO_SNDBUF);
+                backendSocket.setReceiveBufferSize(soRcvBuf);
+                backendSocket.setSendBufferSize(soSndBuf);
                 
                 backendSocket.connect(new InetSocketAddress(backend.getHost(), backend.getPort()), 5000);
                 

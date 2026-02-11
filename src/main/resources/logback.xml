@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Default logging configuration for Proxy Balancer.
+  Console logging is always enabled. File logging can be enabled via config.yaml:
+
+    log_file_enabled: true
+    log_file_path: "/var/log/proxy-balancer/proxy-balancer.log"
+    log_file_rotation_hours: 24
+
+  File logging is configured programmatically at startup (see LoggingConfigurator).
+-->
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
+</configuration>

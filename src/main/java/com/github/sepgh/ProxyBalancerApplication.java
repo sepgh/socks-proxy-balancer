@@ -1,9 +1,11 @@
 package com.github.sepgh;
 
 import com.github.sepgh.config.ConfigurationManager;
+import com.github.sepgh.config.LoggingConfigurator;
 import com.github.sepgh.health.HealthChecker;
 import com.github.sepgh.health.ProxyTester;
 import com.github.sepgh.server.SocksProxyServer;
+import com.github.sepgh.server.StatusHttpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,15 +18,20 @@ public class ProxyBalancerApplication {
     private final ConfigurationManager configManager;
     private final HealthChecker healthChecker;
     private final SocksProxyServer proxyServer;
+    private final StatusHttpServer statusServer;
 
     public ProxyBalancerApplication(String configPath) throws IOException {
         logger.info("Initializing Proxy Balancer Application");
         
         this.configManager = new ConfigurationManager(configPath);
         
+        // Configure file logging if enabled (must happen early)
+        LoggingConfigurator.configure(configManager.getConfig());
+        
         ProxyTester proxyTester = new ProxyTester(
             configManager.getConfig().getConnectionTimeoutMs(),
-            configManager.getConfig().getTestUrl()
+            configManager.getConfig().getTestUrl(),
+            configManager.getConfig().getTestRounds()
         );
         
         this.healthChecker = new HealthChecker(configManager, proxyTester);
@@ -32,8 +39,22 @@ public class ProxyBalancerApplication {
         this.proxyServer = new SocksProxyServer(
             configManager.getConfig().getListenHost(),
             configManager.getConfig().getListenPort(),
-            healthChecker
+            healthChecker,
+            configManager.getConfig().getSoRcvBuf(),
+            configManager.getConfig().getSoSndBuf()
         );
+        
+        if (configManager.getConfig().isStatusEnabled()) {
+            this.statusServer = new StatusHttpServer(
+                configManager.getConfig().getStatusHost(),
+                configManager.getConfig().getStatusPort(),
+                configManager.getConfig().getListenHost(),
+                configManager.getConfig().getListenPort(),
+                healthChecker
+            );
+        } else {
+            this.statusServer = null;
+        }
     }
 
     public void start() throws IOException {
@@ -50,6 +71,10 @@ public class ProxyBalancerApplication {
         
         proxyServer.start();
         
+        if (statusServer != null) {
+            statusServer.start();
+        }
+        
         logger.info("Proxy Balancer Application started successfully");
         logger.info("Listening on {}:{}", 
             configManager.getConfig().getListenHost(), 
@@ -59,6 +84,9 @@ public class ProxyBalancerApplication {
     public void stop() {
         logger.info("Stopping Proxy Balancer Application");
         
+        if (statusServer != null) {
+            statusServer.stop();
+        }
         proxyServer.stop();
         healthChecker.stop();
         
